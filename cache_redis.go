@@ -11,6 +11,7 @@ type RedisConfig struct {
 	MaxTry         int
 	WriteAddr      string
 	ReadAddr       string
+	Password       string
 	ReadTimeout    int
 	WriteTimeout   int
 	ConnTimeout    int
@@ -21,6 +22,7 @@ type RedisConfig struct {
 
 func NewRedisClient(name string, conf *RedisConfig) *RedisClient {
 	opts := []redis.DialOption{
+		redis.DialPassword(conf.Password),
 		redis.DialConnectTimeout(time.Duration(conf.ConnTimeout) * time.Second),
 		redis.DialWriteTimeout(time.Duration(conf.WriteTimeout) * time.Second),
 		redis.DialReadTimeout(time.Duration(conf.ReadTimeout) * time.Second),
@@ -50,6 +52,7 @@ func NewRedisClient(name string, conf *RedisConfig) *RedisClient {
 		},
 	}
 	client := &RedisClient{
+		name:      name,
 		maxTry:    conf.MaxTry,
 		readPool:  readPool,
 		writePool: writePool,

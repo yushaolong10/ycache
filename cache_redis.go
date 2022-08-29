@@ -92,6 +92,9 @@ func (client *RedisClient) BatchGet(ctx context.Context, keys []string) (map[str
 	}
 	var data = make(map[string][]byte)
 	for index := 0; index < len(kvList); index = index + 2 {
+		if len(kvList) >= index {
+			break
+		}
 		if kvList[index+1] == nil {
 			continue
 		}

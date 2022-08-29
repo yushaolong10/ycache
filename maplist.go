@@ -9,6 +9,8 @@ type simpleMapList struct {
 	mutex   sync.Mutex
 	ids     map[string]struct{}
 	mapList map[string]*mapEntry
+
+	valueCount int64 //current value counts
 }
 
 type mapEntry struct {
@@ -28,6 +30,8 @@ func newSimpleMapList() *simpleMapList {
 func (sm *simpleMapList) Add(slot int64, value Indicator) error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
+	//add key count
+	sm.valueCount++
 	//add ids
 	sm.ids[value.Id()] = struct{}{}
 	//add map list
@@ -95,6 +99,7 @@ func (sm *simpleMapList) Delete(index int64) error {
 			for current != nil {
 				i := current.Value.(Indicator)
 				delete(sm.ids, i.Id())
+				sm.valueCount--
 				current = current.Next()
 			}
 			delete(me.indexList, index)
@@ -108,4 +113,8 @@ func (sm *simpleMapList) Exist(id string) bool {
 	defer sm.mutex.Unlock()
 	_, ok := sm.ids[id]
 	return ok
+}
+
+func (sm *simpleMapList) GetValueCount() int64 {
+	return sm.valueCount
 }

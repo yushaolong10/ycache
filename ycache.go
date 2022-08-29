@@ -39,10 +39,14 @@ func (yc *YCache) CreateInstance(name string, levels []CacheLevel, opts ...Insta
 		factor:    cacheTtlFactor,
 		cacheList: make([]ICache, 0),
 		errHandle: yc.errHandle,
+		stat: &YInsStat{
+			CacheStats: make(map[string]*YInsCacheStat),
+		},
 	}
 	for _, level := range levels {
 		if cache, ok := yc.caches[level]; ok {
 			yi.cacheList = append(yi.cacheList, cache)
+			yi.stat.CacheStats[cache.Name()] = new(YInsCacheStat)
 		} else {
 			return nil, fmt.Errorf("level(%d) cache not exist", level)
 		}

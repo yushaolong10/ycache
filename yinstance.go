@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,15 +21,33 @@ type YInstance struct {
 	cacheList []ICache
 	strategy  IStrategy
 	errHandle ErrorHandleFunc
+	stat      *YInsStat
 }
 
-func (yi *YInstance) Get(ctx context.Context, prefix string, key string, loadFn LoadFunc) ([]byte, error) {
+type YInsStat struct {
+	TotalReqCount   int64
+	TotalReqFailed  int64
+	TotalLoadCount  int64
+	TotalLoadFailed int64
+	CacheStats      map[string]*YInsCacheStat
+}
+
+type YInsCacheStat struct {
+	ReqCount  int64
+	ReqFailed int64
+}
+
+func (yi *YInstance) Get(ctx context.Context, prefix string, key string, loadFn LoadFunc) (value []byte, err error) {
 	defer func() {
 		yi.updateIndicator(ctx, prefix, key, loadFn)
+		atomic.AddInt64(&yi.stat.TotalReqCount, 1)
+		if err != nil {
+			atomic.AddInt64(&yi.stat.TotalReqFailed, 1)
+		}
 	}()
 	realKey := yi.addPrefix(prefix, key)
 	for index := 0; index < len(yi.cacheList); index++ {
-		value, err := yi.getFromCache(index, ctx, realKey)
+		value, err = yi.getFromCache(index, ctx, realKey)
 		if err == nil {
 			for head := 0; head < index; head++ {
 				_ = yi.setToCache(head, ctx, realKey, value)
@@ -36,7 +55,7 @@ func (yi *YInstance) Get(ctx context.Context, prefix string, key string, loadFn 
 			return value, nil
 		}
 	}
-	value, err := yi.loadFromSource(ctx, key, loadFn)
+	value, err = yi.loadFromSource(ctx, key, loadFn)
 	if err != nil {
 		return nil, err
 	}
@@ -46,9 +65,13 @@ func (yi *YInstance) Get(ctx context.Context, prefix string, key string, loadFn 
 	return value, nil
 }
 
-func (yi *YInstance) BatchGet(ctx context.Context, prefix string, keys []string, batchLoadFn BatchLoadFunc) (map[string][]byte, error) {
+func (yi *YInstance) BatchGet(ctx context.Context, prefix string, keys []string, batchLoadFn BatchLoadFunc) (kvs map[string][]byte, err error) {
 	defer func() {
 		yi.batchUpdateIndicator(ctx, prefix, keys, batchLoadFn)
+		atomic.AddInt64(&yi.stat.TotalReqCount, 1)
+		if err != nil {
+			atomic.AddInt64(&yi.stat.TotalReqFailed, 1)
+		}
 	}()
 	realKeyList := make([]string, 0)
 	keyMap := make(map[string]string)
@@ -105,7 +128,13 @@ func (yi *YInstance) BatchGet(ctx context.Context, prefix string, keys []string,
 	return dataKvs, nil
 }
 
-func (yi *YInstance) Delete(ctx context.Context, prefix string, key string) error {
+func (yi *YInstance) Delete(ctx context.Context, prefix string, key string) (err error) {
+	defer func() {
+		atomic.AddInt64(&yi.stat.TotalReqCount, 1)
+		if err != nil {
+			atomic.AddInt64(&yi.stat.TotalReqFailed, 1)
+		}
+	}()
 	realKey := yi.addPrefix(prefix, key)
 	for index := len(yi.cacheList) - 1; index >= 0; index-- {
 		_ = yi.delToCache(index, ctx, realKey)
@@ -113,7 +142,13 @@ func (yi *YInstance) Delete(ctx context.Context, prefix string, key string) erro
 	return nil
 }
 
-func (yi *YInstance) BatchDelete(ctx context.Context, prefix string, keys []string) error {
+func (yi *YInstance) BatchDelete(ctx context.Context, prefix string, keys []string) (err error) {
+	defer func() {
+		atomic.AddInt64(&yi.stat.TotalReqCount, 1)
+		if err != nil {
+			atomic.AddInt64(&yi.stat.TotalReqFailed, 1)
+		}
+	}()
 	realKeyList := make([]string, 0)
 	for _, key := range keys {
 		realKey := yi.addPrefix(prefix, key)
@@ -125,7 +160,13 @@ func (yi *YInstance) BatchDelete(ctx context.Context, prefix string, keys []stri
 	return nil
 }
 
-func (yi *YInstance) Update(ctx context.Context, prefix string, key string, loadFn LoadFunc) error {
+func (yi *YInstance) Update(ctx context.Context, prefix string, key string, loadFn LoadFunc) (err error) {
+	defer func() {
+		atomic.AddInt64(&yi.stat.TotalReqCount, 1)
+		if err != nil {
+			atomic.AddInt64(&yi.stat.TotalReqFailed, 1)
+		}
+	}()
 	value, err := yi.loadFromSource(ctx, key, loadFn)
 	if err != nil {
 		return err
@@ -137,7 +178,13 @@ func (yi *YInstance) Update(ctx context.Context, prefix string, key string, load
 	return err
 }
 
-func (yi *YInstance) BatchUpdate(ctx context.Context, prefix string, keys []string, batchLoadFn BatchLoadFunc) error {
+func (yi *YInstance) BatchUpdate(ctx context.Context, prefix string, keys []string, batchLoadFn BatchLoadFunc) (err error) {
+	defer func() {
+		atomic.AddInt64(&yi.stat.TotalReqCount, 1)
+		if err != nil {
+			atomic.AddInt64(&yi.stat.TotalReqFailed, 1)
+		}
+	}()
 	loadKvs, err := yi.batchLoadFromSource(ctx, keys, batchLoadFn)
 	if err != nil {
 		return err
@@ -154,71 +201,85 @@ func (yi *YInstance) BatchUpdate(ctx context.Context, prefix string, keys []stri
 }
 
 func (yi *YInstance) getFromCache(index int, ctx context.Context, key string) (value []byte, err error) {
+	cache := yi.cacheList[index]
 	defer func() {
+		atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqCount, 1)
 		if err != nil {
-			yi.handleError(err)
+			atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqFailed, 1)
+			yi.handleError(cache.Name(), err)
 		}
 	}()
-	cache := yi.cacheList[index]
 	return cache.Get(ctx, key)
 }
 
 func (yi *YInstance) batchGetFromCache(index int, ctx context.Context, keys []string) (kvs map[string][]byte, err error) {
+	cache := yi.cacheList[index]
 	defer func() {
+		atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqCount, 1)
 		if err != nil {
-			yi.handleError(err)
+			atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqFailed, 1)
+			yi.handleError(cache.Name(), err)
 		}
 	}()
-	cache := yi.cacheList[index]
 	return cache.BatchGet(ctx, keys)
 }
 
 func (yi *YInstance) delToCache(index int, ctx context.Context, key string) (err error) {
+	cache := yi.cacheList[index]
 	defer func() {
+		atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqCount, 1)
 		if err != nil {
-			yi.handleError(err)
+			atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqFailed, 1)
+			yi.handleError(cache.Name(), err)
 		}
 	}()
-	cache := yi.cacheList[index]
 	return cache.Del(ctx, key)
 }
 
 func (yi *YInstance) batchDelToCache(index int, ctx context.Context, keys []string) (err error) {
+	cache := yi.cacheList[index]
 	defer func() {
+		atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqCount, 1)
 		if err != nil {
-			yi.handleError(err)
+			atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqFailed, 1)
+			yi.handleError(cache.Name(), err)
 		}
 	}()
-	cache := yi.cacheList[index]
 	return cache.BatchDel(ctx, keys)
 }
 
 func (yi *YInstance) setToCache(index int, ctx context.Context, key string, value []byte) (err error) {
+	cache := yi.cacheList[index]
 	defer func() {
+		atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqCount, 1)
 		if err != nil {
-			yi.handleError(err)
+			atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqFailed, 1)
+			yi.handleError(cache.Name(), err)
 		}
 	}()
 	ttl := yi.makeLevelTtl(index)
-	cache := yi.cacheList[index]
 	return cache.Set(ctx, key, value, ttl)
 }
 
 func (yi *YInstance) batchSetToCache(index int, ctx context.Context, kvs map[string][]byte) (err error) {
+	cache := yi.cacheList[index]
 	defer func() {
+		atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqCount, 1)
 		if err != nil {
-			yi.handleError(err)
+			atomic.AddInt64(&yi.stat.CacheStats[cache.Name()].ReqFailed, 1)
+			yi.handleError(cache.Name(), err)
 		}
 	}()
 	ttl := yi.makeLevelTtl(index)
-	cache := yi.cacheList[index]
 	return cache.BatchSet(ctx, kvs, ttl)
 }
 
 func (yi *YInstance) loadFromSource(ctx context.Context, key string, loadFn LoadFunc) (value []byte, err error) {
 	defer func() {
+		atomic.AddInt64(&yi.stat.TotalLoadCount, 1)
 		if err != nil {
-			yi.handleError(err)
+			atomic.AddInt64(&yi.stat.TotalLoadFailed, 1)
+			yi.handleError("load", err)
 		}
 	}()
 	value, err = loadFn(ctx, key)
@@ -227,8 +288,10 @@ func (yi *YInstance) loadFromSource(ctx context.Context, key string, loadFn Load
 
 func (yi *YInstance) batchLoadFromSource(ctx context.Context, keys []string, batchLoadFn BatchLoadFunc) (kvs map[string][]byte, err error) {
 	defer func() {
+		atomic.AddInt64(&yi.stat.TotalLoadCount, 1)
 		if err != nil {
-			yi.handleError(err)
+			atomic.AddInt64(&yi.stat.TotalLoadFailed, 1)
+			yi.handleError("batchLoad", err)
 		}
 	}()
 	kvs, err = batchLoadFn(ctx, keys)
@@ -273,9 +336,9 @@ func (yi *YInstance) batchUpdateIndicator(ctx context.Context, prefix string, ke
 	}
 }
 
-func (yi *YInstance) handleError(err error) {
+func (yi *YInstance) handleError(desc string, err error) {
 	if yi.errHandle != nil {
-		yi.errHandle(err)
+		yi.errHandle(fmt.Errorf("yinstance(%s) %s err:%s", yi.name, desc, err.Error()))
 	}
 }
 

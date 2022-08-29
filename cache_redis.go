@@ -86,21 +86,16 @@ func (client *RedisClient) BatchGet(ctx context.Context, keys []string) (map[str
 	for _, key := range keys {
 		keyList = append(keyList, key)
 	}
-	kvList, err := redis.Values(client.readDo("MGET", keyList...))
+	valueList, err := redis.Values(client.readDo("MGET", keyList...))
 	if err != nil {
 		return nil, fmt.Errorf("redisclient mget keys:%v err:%s", keys, err.Error())
 	}
 	var data = make(map[string][]byte)
-	for index := 0; index < len(kvList); index = index + 2 {
-		if len(kvList) >= index {
-			break
+	for index, key := range keys {
+		if valueList[index] != nil {
+			value := valueList[index].([]byte)
+			data[key] = value
 		}
-		if kvList[index+1] == nil {
-			continue
-		}
-		key := kvList[index].([]byte)
-		value := kvList[index+1].([]byte)
-		data[string(key)] = value
 	}
 	return data, nil
 }

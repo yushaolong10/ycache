@@ -14,10 +14,10 @@ type simpleMapList struct {
 }
 
 type mapEntry struct {
-	prefix    string
-	fn        LoadFunc
-	bfn       BatchLoadFunc
-	indexList map[int64]*list.List
+	prefix   string
+	fn       LoadFunc
+	bfn      BatchLoadFunc
+	slotList map[int64]*list.List
 }
 
 func newSimpleMapList() *simpleMapList {
@@ -42,37 +42,37 @@ func (sm *simpleMapList) Add(slot int64, value Indicator) error {
 		if me.bfn == nil {
 			me.bfn = value.BatchLoadFunc()
 		}
-		if _, ok := me.indexList[slot]; !ok {
-			me.indexList[slot] = list.New()
+		if _, ok1 := me.slotList[slot]; !ok1 {
+			me.slotList[slot] = list.New()
 		}
-		me.indexList[slot].PushBack(value)
+		me.slotList[slot].PushBack(value)
 	} else {
 		item := &mapEntry{
-			prefix:    value.Prefix(),
-			fn:        value.LoadFunc(),
-			bfn:       value.BatchLoadFunc(),
-			indexList: make(map[int64]*list.List),
+			prefix:   value.Prefix(),
+			fn:       value.LoadFunc(),
+			bfn:      value.BatchLoadFunc(),
+			slotList: make(map[int64]*list.List),
 		}
 		newList := list.New()
 		newList.PushBack(value)
-		item.indexList[slot] = newList
+		item.slotList[slot] = newList
 		sm.mapList[value.Prefix()] = item
 	}
 	return nil
 }
 
-type mapValues struct {
+type slotValues struct {
 	fn         LoadFunc
 	bfn        BatchLoadFunc
 	indicators []Indicator
 }
 
-func (sm *simpleMapList) Get(slot int64) (map[string]*mapValues, error) {
+func (sm *simpleMapList) Get(slot int64) (map[string]*slotValues, error) {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
-	mvs := make(map[string]*mapValues)
+	mvs := make(map[string]*slotValues)
 	for prefix, me := range sm.mapList {
-		if item, ok := me.indexList[slot]; ok {
+		if item, ok := me.slotList[slot]; ok {
 			indicators := make([]Indicator, 0)
 			current := item.Front()
 			for current != nil {
@@ -80,7 +80,7 @@ func (sm *simpleMapList) Get(slot int64) (map[string]*mapValues, error) {
 				indicators = append(indicators, i)
 				current = current.Next()
 			}
-			mvs[prefix] = &mapValues{
+			mvs[prefix] = &slotValues{
 				fn:         me.fn,
 				bfn:        me.bfn,
 				indicators: indicators,
@@ -94,7 +94,7 @@ func (sm *simpleMapList) Delete(index int64) error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 	for _, me := range sm.mapList {
-		if item, ok := me.indexList[index]; ok {
+		if item, ok := me.slotList[index]; ok {
 			current := item.Front()
 			for current != nil {
 				i := current.Value.(Indicator)
@@ -102,7 +102,7 @@ func (sm *simpleMapList) Delete(index int64) error {
 				sm.valueCount--
 				current = current.Next()
 			}
-			delete(me.indexList, index)
+			delete(me.slotList, index)
 		}
 	}
 	return nil

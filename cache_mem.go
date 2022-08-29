@@ -36,10 +36,9 @@ func (mc *MemCache) BatchGet(ctx context.Context, keys []string) (map[string][]b
 	data := make(map[string][]byte)
 	for _, key := range keys {
 		value, err := mc.cache.Get([]byte(key))
-		if err != nil {
-			return nil, fmt.Errorf("freecache batch get key(%s) err:%s", key, err.Error())
+		if err == nil {
+			data[key] = value
 		}
-		data[key] = value
 	}
 	return data, nil
 }

@@ -1,7 +1,7 @@
 # ycache
 level cache provides solution for high concurrent query scenarios.
 
-(持续更新中...)
+(持续更新中...,  当前代码测试覆盖率: 81.1%)
 ### 需求背景 
 面对业务中高频查询的需求，开发一款多级缓存框架
 

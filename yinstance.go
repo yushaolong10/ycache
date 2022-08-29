@@ -46,7 +46,7 @@ type CacheStat struct {
 
 func (yi *YInstance) Get(ctx context.Context, prefix string, key string, loadFn LoadFunc) (value []byte, err error) {
 	defer func() {
-		yi.updateIndicator(ctx, prefix, key, loadFn)
+		yi.updateIndicator(ctx, prefix, key, value, loadFn)
 		atomic.AddInt64(&yi.stat.TotalReqCount, 1)
 		if err != nil {
 			atomic.AddInt64(&yi.stat.TotalReqFailed, 1)
@@ -74,7 +74,7 @@ func (yi *YInstance) Get(ctx context.Context, prefix string, key string, loadFn 
 
 func (yi *YInstance) BatchGet(ctx context.Context, prefix string, keys []string, batchLoadFn BatchLoadFunc) (kvs map[string][]byte, err error) {
 	defer func() {
-		yi.batchUpdateIndicator(ctx, prefix, keys, batchLoadFn)
+		yi.batchUpdateIndicator(ctx, prefix, keys, kvs, batchLoadFn)
 		atomic.AddInt64(&yi.stat.TotalReqCount, 1)
 		if err != nil {
 			atomic.AddInt64(&yi.stat.TotalReqFailed, 1)
@@ -213,11 +213,13 @@ func (yi *YInstance) BatchUpdate(ctx context.Context, prefix string, keys []stri
 
 func (yi *YInstance) Stat() *YStat {
 	stat := &YStat{
-		TotalReqCount:   yi.stat.TotalReqCount,
-		TotalReqFailed:  yi.stat.TotalReqFailed,
-		TotalLoadCount:  yi.stat.TotalLoadCount,
-		TotalLoadFailed: yi.stat.TotalLoadFailed,
-		CacheStats:      make(map[string]*CacheStat),
+		TotalReqCount:     yi.stat.TotalReqCount,
+		TotalReqFailed:    yi.stat.TotalReqFailed,
+		TotalUpdateCount:  yi.stat.TotalUpdateCount,
+		TotalUpdateFailed: yi.stat.TotalUpdateFailed,
+		TotalLoadCount:    yi.stat.TotalLoadCount,
+		TotalLoadFailed:   yi.stat.TotalLoadFailed,
+		CacheStats:        make(map[string]*CacheStat),
 	}
 	for name, cs := range yi.stat.CacheStats {
 		stat.CacheStats[name] = &CacheStat{
@@ -350,21 +352,23 @@ func (yi *YInstance) makeLevelTtl(index int) int {
 	return ttl
 }
 
-func (yi *YInstance) updateIndicator(ctx context.Context, prefix string, key string, loadFn LoadFunc) {
-	if yi.strategy != nil {
+func (yi *YInstance) updateIndicator(ctx context.Context, prefix string, key string, value []byte, loadFn LoadFunc) {
+	if yi.strategy != nil && value != nil && loadFn != nil {
 		realKey := yi.addPrefix(prefix, key)
 		indicator := newDefaultIndicator(yi.name, realKey, prefix, key, loadFn, nil)
 		_ = yi.strategy.UpdateIndicators(ctx, []Indicator{indicator})
 	}
 }
 
-func (yi *YInstance) batchUpdateIndicator(ctx context.Context, prefix string, keys []string, batchLoadFn BatchLoadFunc) {
-	if yi.strategy != nil {
+func (yi *YInstance) batchUpdateIndicator(ctx context.Context, prefix string, keys []string, kvs map[string][]byte, batchLoadFn BatchLoadFunc) {
+	if yi.strategy != nil && len(kvs) > 0 && batchLoadFn != nil {
 		indicators := make([]Indicator, 0)
 		for _, key := range keys {
-			realKey := yi.addPrefix(prefix, key)
-			indicator := newDefaultIndicator(yi.name, realKey, prefix, key, nil, batchLoadFn)
-			indicators = append(indicators, indicator)
+			if _, ok := kvs[key]; ok {
+				realKey := yi.addPrefix(prefix, key)
+				indicator := newDefaultIndicator(yi.name, realKey, prefix, key, nil, batchLoadFn)
+				indicators = append(indicators, indicator)
+			}
 		}
 		_ = yi.strategy.UpdateIndicators(ctx, indicators)
 	}
@@ -403,7 +407,7 @@ func WithInstanceOptionUseStrategy(name string) InstanceOption {
 	return func(yc *YCache, yi *YInstance) error {
 		if strategy, ok := yc.strategies[name]; ok {
 			yi.strategy = strategy
-			boundaryTtl := yi.ttl + (len(yi.cacheList)-1)*yi.factor
+			boundaryTtl := yi.ttl * (1 + (len(yi.cacheList)-1)*yi.factor)
 			_ = strategy.RegisterHandler(yi.name, yi, boundaryTtl)
 			return nil
 		}

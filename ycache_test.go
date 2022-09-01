@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-var redisHost = "demo1"
-var redisPwd = "demo2"
+var redisHost = "127.0.0.1:6379"
+var redisPwd = "123456"
 var cache *YCache
 var bizCacheIns *YInstance
 
@@ -25,13 +25,14 @@ func TestMain(m *testing.M) {
 		MaxIdleConns: 5,
 		IdleTimeout:  10,
 	}
-	strategyConf := &StrategyAutoConfig{
+	collectorConf := &WarmCollectorConfig{
 		BuffSeconds: 10,
 		EntryNumber: 2,
 		TimeRatio:   30,
 		MaxHotCount: 1000,
 		HotKeyTtl:   60,
 	}
+	collector := NewWarmCollector(collectorConf)
 	cache = NewYCache("my_first_test",
 		WithCacheOptionErrorHandle(func(err error) {
 			fmt.Printf("ycache err:%s\n", err.Error())
@@ -42,7 +43,6 @@ func TestMain(m *testing.M) {
 		WithCacheOptionCacheLevel(CacheL2,
 			NewRedisClient("my_redis_cache", redisConf),
 		),
-		WithCacheOptionStrategy("cache_strategy_auto", NewStrategyAuto(strategyConf)),
 	)
 	var err error
 	bizCacheIns, err = cache.CreateInstance("my_instance_1",
@@ -50,7 +50,7 @@ func TestMain(m *testing.M) {
 		WithInstanceOptionCacheTtl(10),
 		WithInstanceOptionRandomTtl(20),
 		WithInstanceOptionTtlFactor(5),
-		WithInstanceOptionUseStrategy("cache_strategy_auto"),
+		WithInstanceOptionCollector(collector),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("create instance1 err:%s", err.Error()))

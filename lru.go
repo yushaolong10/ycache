@@ -22,10 +22,9 @@ type simpleLRU struct {
 }
 
 type lruEntry struct {
-	key         string
-	value       Indicator
-	createAt    int64 //create unix timestamp
-	updateCount int64
+	key      string
+	count    int64
+	createAt int64 //create unix timestamp
 }
 
 func newSimpleLRU(maxCount int64, ttl int64) *simpleLRU {
@@ -38,8 +37,8 @@ func newSimpleLRU(maxCount int64, ttl int64) *simpleLRU {
 	return cache
 }
 
-//Update return key total update upCount
-func (cache *simpleLRU) Update(key string, value Indicator) int64 {
+//Update return key total update count
+func (cache *simpleLRU) Update(key string) int64 {
 	cache.mutex.Lock()
 	defer func() {
 		cache.checkWithLocked()
@@ -47,45 +46,20 @@ func (cache *simpleLRU) Update(key string, value Indicator) int64 {
 	}()
 	if ele, ok := cache.lruMap[key]; ok { //exist
 		item := ele.Value.(*lruEntry)
-		item.value = value
 		item.createAt = time.Now().Unix()
-		item.updateCount++
+		item.count++
 		cache.lruList.MoveToBack(ele)
-		return item.updateCount
+		return item.count
 	} else { //new
 		item := &lruEntry{
-			key:         key,
-			value:       value,
-			createAt:    time.Now().Unix(),
-			updateCount: 1,
+			key:      key,
+			createAt: time.Now().Unix(),
+			count:    1,
 		}
 		cache.lruMap[key] = cache.lruList.PushBack(item)
 		cache.keyCount++
-		return item.updateCount
+		return item.count
 	}
-}
-
-//Get for get key value
-func (cache *simpleLRU) Get(key string) (Indicator, error) {
-	cache.mutex.Lock()
-	defer func() {
-		cache.checkWithLocked()
-		cache.mutex.Unlock()
-	}()
-	cache.reqCount++
-	if ele, ok := cache.lruMap[key]; ok {
-		item := ele.Value.(*lruEntry)
-		if item.createAt+cache.ttl > time.Now().Unix() { //有效
-			cache.hitCount++
-			cache.lruList.MoveToBack(ele)
-			return item.value, nil
-		}
-		//expire
-		cache.lruList.Remove(ele)
-		delete(cache.lruMap, item.key)
-		cache.keyCount--
-	}
-	return nil, errLruNotFoundKey
 }
 
 //Delete from delete key

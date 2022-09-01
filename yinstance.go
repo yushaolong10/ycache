@@ -24,7 +24,7 @@ type YInstance struct {
 	factor    int
 	random    int
 	cacheList []ICache
-	strategy  IStrategy
+	collector ICollector
 	errHandle ErrorHandleFunc
 	stat      *YStat
 }
@@ -352,25 +352,30 @@ func (yi *YInstance) makeLevelTtl(index int) int {
 	return ttl
 }
 
+func (yi *YInstance) getBoundaryTtl() int {
+	boundaryTtl := yi.ttl * (1 + (len(yi.cacheList)-1)*yi.factor)
+	return boundaryTtl
+}
+
 func (yi *YInstance) updateIndicator(ctx context.Context, prefix string, key string, value []byte, loadFn LoadFunc) {
-	if yi.strategy != nil && value != nil && loadFn != nil {
+	if yi.collector != nil && value != nil && loadFn != nil {
 		realKey := yi.addPrefix(prefix, key)
-		indicator := newDefaultIndicator(yi.name, realKey, prefix, key, loadFn, nil)
-		_ = yi.strategy.UpdateIndicators(ctx, []Indicator{indicator})
+		indicator := newYIndicator(realKey, prefix, key, loadFn, nil)
+		_ = yi.collector.UpdateIndicators(ctx, yi.name, []Indicator{indicator})
 	}
 }
 
 func (yi *YInstance) batchUpdateIndicator(ctx context.Context, prefix string, keys []string, kvs map[string][]byte, batchLoadFn BatchLoadFunc) {
-	if yi.strategy != nil && len(kvs) > 0 && batchLoadFn != nil {
+	if yi.collector != nil && len(kvs) > 0 && batchLoadFn != nil {
 		indicators := make([]Indicator, 0)
 		for _, key := range keys {
 			if _, ok := kvs[key]; ok {
 				realKey := yi.addPrefix(prefix, key)
-				indicator := newDefaultIndicator(yi.name, realKey, prefix, key, nil, batchLoadFn)
+				indicator := newYIndicator(realKey, prefix, key, nil, batchLoadFn)
 				indicators = append(indicators, indicator)
 			}
 		}
-		_ = yi.strategy.UpdateIndicators(ctx, indicators)
+		_ = yi.collector.UpdateIndicators(ctx, yi.name, indicators)
 	}
 }
 
@@ -403,14 +408,10 @@ func WithInstanceOptionTtlFactor(factor int) InstanceOption {
 	}
 }
 
-func WithInstanceOptionUseStrategy(name string) InstanceOption {
+func WithInstanceOptionCollector(collector ICollector) InstanceOption {
 	return func(yc *YCache, yi *YInstance) error {
-		if strategy, ok := yc.strategies[name]; ok {
-			yi.strategy = strategy
-			boundaryTtl := yi.ttl * (1 + (len(yi.cacheList)-1)*yi.factor)
-			_ = strategy.RegisterHandler(yi.name, yi, boundaryTtl)
-			return nil
-		}
-		return fmt.Errorf("strategy name(%s) not exist", name)
+		_ = collector.RegisterHandler(yi.name, yi, yi.getBoundaryTtl())
+		yi.collector = collector
+		return nil
 	}
 }

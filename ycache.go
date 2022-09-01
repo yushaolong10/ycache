@@ -13,9 +13,8 @@ const (
 
 func NewYCache(name string, opts ...CacheOption) *YCache {
 	yc := &YCache{
-		name:       name,
-		caches:     make(map[CacheLevel]ICache, 3),
-		strategies: make(map[string]IStrategy),
+		name:   name,
+		caches: make(map[CacheLevel]ICache, 3),
 	}
 	for _, opt := range opts {
 		opt(yc)
@@ -26,10 +25,9 @@ func NewYCache(name string, opts ...CacheOption) *YCache {
 type ErrorHandleFunc func(err error)
 
 type YCache struct {
-	name       string
-	errHandle  ErrorHandleFunc
-	caches     map[CacheLevel]ICache
-	strategies map[string]IStrategy
+	name      string
+	errHandle ErrorHandleFunc
+	caches    map[CacheLevel]ICache
 }
 
 func (yc *YCache) CreateInstance(name string, levels []CacheLevel, opts ...InstanceOption) (*YInstance, error) {
@@ -79,11 +77,5 @@ func WithCacheOptionCacheLevel(level CacheLevel, cache ICache) CacheOption {
 func WithCacheOptionErrorHandle(handle ErrorHandleFunc) CacheOption {
 	return func(yc *YCache) {
 		yc.errHandle = handle
-	}
-}
-
-func WithCacheOptionStrategy(name string, strategy IStrategy) CacheOption {
-	return func(yc *YCache) {
-		yc.strategies[name] = strategy
 	}
 }

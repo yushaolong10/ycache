@@ -225,13 +225,14 @@ func (yi *YInstance) BatchUpdate(ctx context.Context, prefix string, keys []stri
 }
 
 type YStat struct {
-	TotalReqCount     int64
-	TotalReqFailed    int64
-	TotalUpdateCount  int64
-	TotalUpdateFailed int64
-	TotalLoadCount    int64
-	TotalLoadFailed   int64
-	CacheStats        map[string]*CacheStat
+	TotalReqCount       int64
+	TotalReqFailed      int64
+	TotalUpdateCount    int64
+	TotalUpdateFailed   int64
+	TotalLoadConcurrent int64
+	TotalLoadCount      int64
+	TotalLoadFailed     int64
+	CacheStats          map[string]*CacheStat
 }
 
 type CacheStat struct {
@@ -241,13 +242,14 @@ type CacheStat struct {
 
 func (yi *YInstance) Stat() *YStat {
 	stat := &YStat{
-		TotalReqCount:     yi.stat.TotalReqCount,
-		TotalReqFailed:    yi.stat.TotalReqFailed,
-		TotalUpdateCount:  yi.stat.TotalUpdateCount,
-		TotalUpdateFailed: yi.stat.TotalUpdateFailed,
-		TotalLoadCount:    yi.stat.TotalLoadCount,
-		TotalLoadFailed:   yi.stat.TotalLoadFailed,
-		CacheStats:        make(map[string]*CacheStat),
+		TotalReqCount:       yi.stat.TotalReqCount,
+		TotalReqFailed:      yi.stat.TotalReqFailed,
+		TotalUpdateCount:    yi.stat.TotalUpdateCount,
+		TotalUpdateFailed:   yi.stat.TotalUpdateFailed,
+		TotalLoadConcurrent: yi.stat.TotalLoadConcurrent,
+		TotalLoadCount:      yi.stat.TotalLoadCount,
+		TotalLoadFailed:     yi.stat.TotalLoadFailed,
+		CacheStats:          make(map[string]*CacheStat),
 	}
 	for name, cs := range yi.stat.CacheStats {
 		stat.CacheStats[name] = &CacheStat{
@@ -332,80 +334,16 @@ func (yi *YInstance) batchSetToCache(index int, ctx context.Context, kvs map[str
 	return cache.BatchSet(ctx, kvs, ttl)
 }
 
-type loadKey struct {
-	count  int64
-	result chan *loadResult
-}
-
-type loadResult struct {
-	value interface{}
-	err   error
-}
-
-func (lk *loadKey) raceRequest(fn func() (interface{}, error)) (value interface{}, err error, success bool) {
-	number := atomic.AddInt64(&lk.count, 1)
-	//only first can request successfully
-	//others will wait for reply
-	if number == 1 {
-		value, err = fn()
-		success = true
-	} else {
-		ret := <-lk.result
-		if ret == nil {
-			err = ErrConcurrentLoad
-		} else {
-			value, err = ret.value, ret.err
-		}
-	}
-	return
-}
-
-func (lk *loadKey) wakeupWaiters(value interface{}, err error) {
-	total := atomic.LoadInt64(&lk.count)
-	for total > 1 {
-		total--
-		lk.result <- &loadResult{
-			value: value,
-			err:   err,
-		}
-	}
-	close(lk.result)
-}
-
-//loadControl from request load func concurrency control
-type loadControl struct {
-	mutex  sync.Mutex
-	keyMap map[string]*loadKey
-}
-
-func (lc *loadControl) get(key string) *loadKey {
-	lc.mutex.Lock()
-	defer lc.mutex.Unlock()
-	if item, ok := lc.keyMap[key]; ok {
-		return item
-	}
-	item := &loadKey{
-		result: make(chan *loadResult, 0),
-	}
-	lc.keyMap[key] = item
-	return item
-}
-
-func (lc *loadControl) delete(key string) {
-	lc.mutex.Lock()
-	defer lc.mutex.Unlock()
-	if _, ok := lc.keyMap[key]; ok {
-		delete(lc.keyMap, key)
-	}
-}
-
 func (yi *YInstance) loadFromSource(ctx context.Context, prefix string, key string, loadFn LoadFunc) (done func(), value []byte, err error) {
 	if loadFn == nil {
 		return nil, nil, ErrLoadFuncEmpty
 	}
+	defer func() {
+		atomic.AddInt64(&yi.stat.TotalLoadConcurrent, 1)
+	}()
 	id := yi.addPrefix(prefix, key)
-	lk := yi.lc.get(id)
-	retVal, retErr, success := lk.raceRequest(func() (interface{}, error) {
+	lh := yi.lc.get(id)
+	retVal, retErr, success := lh.raceRequest(func() (interface{}, error) {
 		retVal, retErr := loadFn(ctx, key)
 		return retVal, retErr
 	})
@@ -418,7 +356,7 @@ func (yi *YInstance) loadFromSource(ctx context.Context, prefix string, key stri
 				yi.handleError("load", err)
 			}
 			yi.lc.delete(id)
-			lk.wakeupWaiters(retVal, retErr)
+			lh.wakeupWaiters(retVal, retErr)
 		}
 	}
 	if retVal != nil {
@@ -434,10 +372,13 @@ func (yi *YInstance) batchLoadFromSource(ctx context.Context, prefix string, key
 	if batchLoadFn == nil {
 		return nil, nil, ErrBatchLoadFuncEmpty
 	}
+	defer func() {
+		atomic.AddInt64(&yi.stat.TotalLoadConcurrent, 1)
+	}()
 	sort.Sort(sort.StringSlice(keys))
 	id := yi.addPrefix(prefix, strings.Join(keys, ","))
-	lk := yi.lc.get(id)
-	retVal, retErr, success := lk.raceRequest(func() (interface{}, error) {
+	lh := yi.lc.get(id)
+	retVal, retErr, success := lh.raceRequest(func() (interface{}, error) {
 		retVal, retErr := batchLoadFn(ctx, keys)
 		return retVal, retErr
 	})
@@ -450,7 +391,7 @@ func (yi *YInstance) batchLoadFromSource(ctx context.Context, prefix string, key
 				yi.handleError("batchLoad", err)
 			}
 			yi.lc.delete(id)
-			lk.wakeupWaiters(retVal, retErr)
+			lh.wakeupWaiters(retVal, retErr)
 		}
 	}
 	if retVal != nil {
@@ -511,6 +452,74 @@ func (yi *YInstance) handleError(desc string, err error) {
 	if yi.errHandle != nil {
 		yi.errHandle(fmt.Errorf("yinstance(%s) %s err:%s", yi.name, desc, err.Error()))
 	}
+}
+
+//loadControl for control all key request load func in concurrency condition
+type loadControl struct {
+	mutex      sync.Mutex
+	keyHandler map[string]*loadHandler
+}
+
+func (lc *loadControl) get(key string) *loadHandler {
+	lc.mutex.Lock()
+	defer lc.mutex.Unlock()
+	if item, ok := lc.keyHandler[key]; ok {
+		return item
+	}
+	item := &loadHandler{
+		result: make(chan *loadResult, 0),
+	}
+	lc.keyHandler[key] = item
+	return item
+}
+
+func (lc *loadControl) delete(key string) {
+	lc.mutex.Lock()
+	defer lc.mutex.Unlock()
+	if _, ok := lc.keyHandler[key]; ok {
+		delete(lc.keyHandler, key)
+	}
+}
+
+//loadHandler for handle the key in concurrent condition
+type loadHandler struct {
+	count  int64
+	result chan *loadResult
+}
+
+type loadResult struct {
+	value interface{}
+	err   error
+}
+
+func (lh *loadHandler) raceRequest(fn func() (interface{}, error)) (value interface{}, err error, success bool) {
+	number := atomic.AddInt64(&lh.count, 1)
+	//only first request can call load func successfully
+	//others will wait for reply
+	if number == 1 {
+		value, err = fn()
+		success = true
+	} else {
+		ret := <-lh.result
+		if ret == nil {
+			err = ErrConcurrentLoad
+		} else {
+			value, err = ret.value, ret.err
+		}
+	}
+	return
+}
+
+func (lh *loadHandler) wakeupWaiters(value interface{}, err error) {
+	total := atomic.LoadInt64(&lh.count)
+	for total > 1 {
+		total--
+		lh.result <- &loadResult{
+			value: value,
+			err:   err,
+		}
+	}
+	close(lh.result)
 }
 
 type InstanceOption func(yc *YCache, yi *YInstance) error

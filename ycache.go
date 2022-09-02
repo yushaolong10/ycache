@@ -39,7 +39,7 @@ func (yc *YCache) CreateInstance(name string, levels []CacheLevel, opts ...Insta
 		cacheList: make([]ICache, 0),
 		errHandle: yc.errHandle,
 		lc: &loadControl{
-			keyMap: make(map[string]*loadKey),
+			keyHandler: make(map[string]*loadHandler),
 		},
 		stat: &YStat{
 			CacheStats: make(map[string]*CacheStat),

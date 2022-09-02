@@ -4,13 +4,17 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 var (
-	ErrLoadFunc      = fmt.Errorf("LoadFunc is nil")
-	ErrBatchLoadFunc = fmt.Errorf("BatchLoadFunc is nil")
+	ErrLoadFuncEmpty      = fmt.Errorf("request LoadFunc is nil")
+	ErrBatchLoadFuncEmpty = fmt.Errorf("request BatchLoadFunc is nil")
+	ErrConcurrentLoad     = fmt.Errorf("concurrent load return nil")
 )
 
 type LoadFunc func(ctx context.Context, key string) ([]byte, error)
@@ -23,25 +27,11 @@ type YInstance struct {
 	ttl       int
 	factor    int
 	random    int
+	lc        *loadControl
 	cacheList []ICache
 	collector ICollector
 	errHandle ErrorHandleFunc
 	stat      *YStat
-}
-
-type YStat struct {
-	TotalReqCount     int64
-	TotalReqFailed    int64
-	TotalUpdateCount  int64
-	TotalUpdateFailed int64
-	TotalLoadCount    int64
-	TotalLoadFailed   int64
-	CacheStats        map[string]*CacheStat
-}
-
-type CacheStat struct {
-	ReqCount  int64
-	ReqFailed int64
 }
 
 func (yi *YInstance) Get(ctx context.Context, prefix string, key string, loadFn LoadFunc) (value []byte, err error) {
@@ -62,7 +52,12 @@ func (yi *YInstance) Get(ctx context.Context, prefix string, key string, loadFn 
 			return value, nil
 		}
 	}
-	value, err = yi.loadFromSource(ctx, key, loadFn)
+	var done func()
+	done, value, err = yi.loadFromSource(ctx, prefix, key, loadFn)
+	if done != nil {
+		//when write to cache successfully, call done
+		defer done()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -117,9 +112,17 @@ func (yi *YInstance) BatchGet(ctx context.Context, prefix string, keys []string,
 			loadKeys = append(loadKeys, key)
 		}
 	}
-	loadKvs, err := yi.batchLoadFromSource(ctx, loadKeys, batchLoadFn)
+	var done func()
+	done, loadKvs, err := yi.batchLoadFromSource(ctx, prefix, loadKeys, batchLoadFn)
+	if done != nil {
+		//when write to cache successfully, call done
+		defer done()
+	}
 	if err != nil {
 		return nil, err
+	}
+	if len(loadKvs) == 0 {
+		return dataKvs, nil
 	}
 	loadRealKvs := make(map[string][]byte)
 	for key, value := range loadKvs {
@@ -176,7 +179,12 @@ func (yi *YInstance) Update(ctx context.Context, prefix string, key string, load
 			atomic.AddInt64(&yi.stat.TotalUpdateFailed, 1)
 		}
 	}()
-	value, err := yi.loadFromSource(ctx, key, loadFn)
+	var done func()
+	done, value, err := yi.loadFromSource(ctx, prefix, key, loadFn)
+	if done != nil {
+		//when write to cache successfully, call done
+		defer done()
+	}
 	if err != nil {
 		return err
 	}
@@ -196,7 +204,12 @@ func (yi *YInstance) BatchUpdate(ctx context.Context, prefix string, keys []stri
 			atomic.AddInt64(&yi.stat.TotalUpdateFailed, 1)
 		}
 	}()
-	loadKvs, err := yi.batchLoadFromSource(ctx, keys, batchLoadFn)
+	var done func()
+	done, loadKvs, err := yi.batchLoadFromSource(ctx, prefix, keys, batchLoadFn)
+	if done != nil {
+		//when write to cache successfully, call done
+		defer done()
+	}
 	if err != nil {
 		return err
 	}
@@ -209,6 +222,21 @@ func (yi *YInstance) BatchUpdate(ctx context.Context, prefix string, keys []stri
 		_ = yi.batchSetToCache(index, ctx, realKvs)
 	}
 	return nil
+}
+
+type YStat struct {
+	TotalReqCount     int64
+	TotalReqFailed    int64
+	TotalUpdateCount  int64
+	TotalUpdateFailed int64
+	TotalLoadCount    int64
+	TotalLoadFailed   int64
+	CacheStats        map[string]*CacheStat
+}
+
+type CacheStat struct {
+	ReqCount  int64
+	ReqFailed int64
 }
 
 func (yi *YInstance) Stat() *YStat {
@@ -304,33 +332,133 @@ func (yi *YInstance) batchSetToCache(index int, ctx context.Context, kvs map[str
 	return cache.BatchSet(ctx, kvs, ttl)
 }
 
-func (yi *YInstance) loadFromSource(ctx context.Context, key string, loadFn LoadFunc) (value []byte, err error) {
-	if loadFn == nil {
-		return nil, ErrLoadFunc
-	}
-	defer func() {
-		atomic.AddInt64(&yi.stat.TotalLoadCount, 1)
-		if err != nil {
-			atomic.AddInt64(&yi.stat.TotalLoadFailed, 1)
-			yi.handleError("load", err)
+type loadKey struct {
+	count  int64
+	result chan *loadResult
+}
+
+type loadResult struct {
+	value interface{}
+	err   error
+}
+
+func (lk *loadKey) raceRequest(fn func() (interface{}, error)) (value interface{}, err error, success bool) {
+	number := atomic.AddInt64(&lk.count, 1)
+	//only first can request successfully
+	//others will wait for reply
+	if number == 1 {
+		value, err = fn()
+		success = true
+	} else {
+		ret := <-lk.result
+		if ret == nil {
+			err = ErrConcurrentLoad
+		} else {
+			value, err = ret.value, ret.err
 		}
-	}()
-	value, err = loadFn(ctx, key)
+	}
 	return
 }
 
-func (yi *YInstance) batchLoadFromSource(ctx context.Context, keys []string, batchLoadFn BatchLoadFunc) (kvs map[string][]byte, err error) {
-	if batchLoadFn == nil {
-		return nil, ErrBatchLoadFunc
-	}
-	defer func() {
-		atomic.AddInt64(&yi.stat.TotalLoadCount, 1)
-		if err != nil {
-			atomic.AddInt64(&yi.stat.TotalLoadFailed, 1)
-			yi.handleError("batchLoad", err)
+func (lk *loadKey) wakeupWaiters(value interface{}, err error) {
+	total := atomic.LoadInt64(&lk.count)
+	for total > 1 {
+		total--
+		lk.result <- &loadResult{
+			value: value,
+			err:   err,
 		}
-	}()
-	kvs, err = batchLoadFn(ctx, keys)
+	}
+	close(lk.result)
+}
+
+//loadControl from request load func concurrency control
+type loadControl struct {
+	mutex  sync.Mutex
+	keyMap map[string]*loadKey
+}
+
+func (lc *loadControl) get(key string) *loadKey {
+	lc.mutex.Lock()
+	defer lc.mutex.Unlock()
+	if item, ok := lc.keyMap[key]; ok {
+		return item
+	}
+	item := &loadKey{
+		result: make(chan *loadResult, 0),
+	}
+	lc.keyMap[key] = item
+	return item
+}
+
+func (lc *loadControl) delete(key string) {
+	lc.mutex.Lock()
+	defer lc.mutex.Unlock()
+	if _, ok := lc.keyMap[key]; ok {
+		delete(lc.keyMap, key)
+	}
+}
+
+func (yi *YInstance) loadFromSource(ctx context.Context, prefix string, key string, loadFn LoadFunc) (done func(), value []byte, err error) {
+	if loadFn == nil {
+		return nil, nil, ErrLoadFuncEmpty
+	}
+	id := yi.addPrefix(prefix, key)
+	lk := yi.lc.get(id)
+	retVal, retErr, success := lk.raceRequest(func() (interface{}, error) {
+		retVal, retErr := loadFn(ctx, key)
+		return retVal, retErr
+	})
+	if success {
+		done = func() {
+			//add metric
+			atomic.AddInt64(&yi.stat.TotalLoadCount, 1)
+			if err != nil {
+				atomic.AddInt64(&yi.stat.TotalLoadFailed, 1)
+				yi.handleError("load", err)
+			}
+			yi.lc.delete(id)
+			lk.wakeupWaiters(retVal, retErr)
+		}
+	}
+	if retVal != nil {
+		value = retVal.([]byte)
+	}
+	if retErr != nil {
+		err = retErr
+	}
+	return
+}
+
+func (yi *YInstance) batchLoadFromSource(ctx context.Context, prefix string, keys []string, batchLoadFn BatchLoadFunc) (done func(), kvs map[string][]byte, err error) {
+	if batchLoadFn == nil {
+		return nil, nil, ErrBatchLoadFuncEmpty
+	}
+	sort.Sort(sort.StringSlice(keys))
+	id := yi.addPrefix(prefix, strings.Join(keys, ","))
+	lk := yi.lc.get(id)
+	retVal, retErr, success := lk.raceRequest(func() (interface{}, error) {
+		retVal, retErr := batchLoadFn(ctx, keys)
+		return retVal, retErr
+	})
+	if success {
+		done = func() {
+			//add metric
+			atomic.AddInt64(&yi.stat.TotalLoadCount, 1)
+			if err != nil {
+				atomic.AddInt64(&yi.stat.TotalLoadFailed, 1)
+				yi.handleError("batchLoad", err)
+			}
+			yi.lc.delete(id)
+			lk.wakeupWaiters(retVal, retErr)
+		}
+	}
+	if retVal != nil {
+		kvs = retVal.(map[string][]byte)
+	}
+	if retErr != nil {
+		err = retErr
+	}
 	return
 }
 

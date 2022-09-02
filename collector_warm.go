@@ -55,7 +55,7 @@ type WarmCollector struct {
 type updateHandler struct {
 	handler     IUpdateHandler
 	boundaryTtl int64
-	yfm         *yFuncManager
+	yf          *yFunc
 	mList       *simpleMapList
 }
 
@@ -63,8 +63,8 @@ func (wc *WarmCollector) RegisterHandler(instance string, handler IUpdateHandler
 	wc.handlers[instance] = &updateHandler{
 		handler:     handler,
 		boundaryTtl: int64(boundaryTtl),
-		yfm: &yFuncManager{
-			fnMap: make(map[string]*yFunc),
+		yf: &yFunc{
+			loadMap: make(map[string]*yLoad),
 		},
 		mList: newSimpleMapList(),
 	}
@@ -85,7 +85,7 @@ func (wc *WarmCollector) updateIndicator(ctx context.Context, instance string, i
 		return nil
 	}
 	//add func
-	uHandler.yfm.AddFunc(indicator.Prefix(), indicator.LoadFunc(), indicator.BatchLoadFunc())
+	uHandler.yf.addFunc(indicator.Prefix(), indicator.LoadFunc(), indicator.BatchLoadFunc())
 	//for lru filter
 	number := wc.lru.Update(indicator.Id())
 	if number != wc.entryTimes {
@@ -115,7 +115,7 @@ func (wc *WarmCollector) invoke() {
 			continue
 		}
 		for prefix, indicators := range sv {
-			fn, bfn := uHandler.yfm.GetFunc(prefix)
+			fn, bfn := uHandler.yf.getFunc(prefix)
 			//opt use pool
 			if bfn != nil {
 				keys := make([]string, 0)
@@ -137,40 +137,40 @@ func (wc *WarmCollector) invoke() {
 	}
 }
 
-type yFuncManager struct {
-	mutex sync.Mutex
-	fnMap map[string]*yFunc
+type yFunc struct {
+	mutex   sync.Mutex
+	loadMap map[string]*yLoad
 }
 
-type yFunc struct {
+type yLoad struct {
 	LoadFn      LoadFunc
 	BatchLoadFn BatchLoadFunc
 }
 
-func (yfm *yFuncManager) AddFunc(prefix string, fn LoadFunc, bfn BatchLoadFunc) {
-	yfm.mutex.Lock()
-	defer yfm.mutex.Unlock()
-	if yfn, ok := yfm.fnMap[prefix]; ok {
-		if yfn.LoadFn == nil {
-			yfn.LoadFn = fn
+func (yf *yFunc) addFunc(prefix string, fn LoadFunc, bfn BatchLoadFunc) {
+	yf.mutex.Lock()
+	defer yf.mutex.Unlock()
+	if load, ok := yf.loadMap[prefix]; ok {
+		if load.LoadFn == nil {
+			load.LoadFn = fn
 		}
-		if yfn.BatchLoadFn == nil {
-			yfn.BatchLoadFn = bfn
+		if load.BatchLoadFn == nil {
+			load.BatchLoadFn = bfn
 		}
 	} else {
-		yfn = &yFunc{
+		load = &yLoad{
 			LoadFn:      fn,
 			BatchLoadFn: bfn,
 		}
-		yfm.fnMap[prefix] = yfn
+		yf.loadMap[prefix] = load
 	}
 }
 
-func (yfm *yFuncManager) GetFunc(prefix string) (fn LoadFunc, bfn BatchLoadFunc) {
-	yfm.mutex.Lock()
-	defer yfm.mutex.Unlock()
-	if yfn, ok := yfm.fnMap[prefix]; ok {
-		return yfn.LoadFn, yfn.BatchLoadFn
+func (yf *yFunc) getFunc(prefix string) (fn LoadFunc, bfn BatchLoadFunc) {
+	yf.mutex.Lock()
+	defer yf.mutex.Unlock()
+	if load, ok := yf.loadMap[prefix]; ok {
+		return load.LoadFn, load.BatchLoadFn
 	}
 	return
 }

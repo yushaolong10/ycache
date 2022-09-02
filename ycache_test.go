@@ -223,3 +223,28 @@ func TestYInstanceStrategy(t *testing.T) {
 	t.Logf("ins stat:%s", string(stat))
 	time.Sleep(time.Millisecond * 50)
 }
+
+func TestYInstanceConcurrent(t *testing.T) {
+	key1 := "k18"
+	for i := 0; i < 20; i++ {
+		i := i
+		go func() {
+			val, _ := bizCacheIns.Get(context.Background(), "_abc_", key1, func(ctx context.Context, key string) ([]byte, error) {
+				time.Sleep(time.Second)
+				fmt.Println("in here", i)
+				if i < 10 {
+					return []byte("k1 hello"), nil
+				} else {
+					return []byte("k1 strategy ok"), nil
+				}
+			})
+			t.Logf("instance get 1 success, index:%d,key:%s,val:%s", i, key1, string(val))
+		}()
+	}
+	stat, _ := json.Marshal(bizCacheIns.Stat())
+	t.Logf("ins stat:%s", string(stat))
+	time.Sleep(time.Second * 20)
+	stat, _ = json.Marshal(bizCacheIns.Stat())
+	t.Logf("ins stat:%s", string(stat))
+	time.Sleep(time.Second * 2)
+}

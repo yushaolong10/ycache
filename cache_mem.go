@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/coocood/freecache"
 	"runtime/debug"
+	"sync"
 )
 
 func NewMemCache(name string, size int, gcPercent int) *MemCache {
@@ -33,11 +34,24 @@ func (mc *MemCache) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (mc *MemCache) BatchGet(ctx context.Context, keys []string) (map[string][]byte, error) {
+	mp := &sync.Map{}
+	wg := &sync.WaitGroup{}
+	for _, key := range keys {
+		wg.Add(1)
+		k1 := key
+		go func() {
+			defer wg.Done()
+			value, err := mc.cache.Get([]byte(k1))
+			if err == nil {
+				mp.Store(k1, value)
+			}
+		}()
+	}
+	wg.Wait()
 	data := make(map[string][]byte)
 	for _, key := range keys {
-		value, err := mc.cache.Get([]byte(key))
-		if err == nil {
-			data[key] = value
+		if v, ok := mp.Load(key); ok {
+			data[key] = v.([]byte)
 		}
 	}
 	return data, nil

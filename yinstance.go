@@ -101,10 +101,10 @@ func (yi *YInstance) BatchGet(ctx context.Context, prefix string, keys []string,
 			for head := 0; head < index; head++ {
 				_ = yi.batchSetToCache(head, ctx, newRealKvs)
 			}
+			if len(dataKvs) == len(keys) {
+				return dataKvs, nil
+			}
 		}
-	}
-	if len(dataKvs) == len(keys) {
-		return dataKvs, nil
 	}
 	loadKeys := make([]string, 0)
 	for _, key := range keys {

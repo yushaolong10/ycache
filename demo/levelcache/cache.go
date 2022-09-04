@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"ycache"
+	"ycache/demo/prometheus"
 )
 
 var Biz1Cache *ycache.YInstance
@@ -66,10 +67,49 @@ func Init() error {
 }
 
 func monitor() {
+	var i int64
+	var oldStat = &ycache.YStat{CacheStats: make(map[string]*ycache.CacheStat)}
 	for {
-		time.Sleep(time.Second * 10)
+		time.Sleep(time.Second * 1)
 		stat := Biz1Cache.Stat()
+		incr := &ycache.YStat{
+			TotalReqCount:       stat.TotalReqCount - oldStat.TotalReqCount,
+			TotalReqFailed:      stat.TotalReqFailed - oldStat.TotalReqFailed,
+			TotalUpdateCount:    stat.TotalUpdateCount - stat.TotalUpdateCount,
+			TotalUpdateFailed:   stat.TotalUpdateFailed - stat.TotalUpdateFailed,
+			TotalLoadConcurrent: stat.TotalLoadConcurrent - stat.TotalLoadConcurrent,
+			TotalLoadCount:      stat.TotalLoadCount - stat.TotalLoadCount,
+			TotalLoadFailed:     stat.TotalLoadFailed - stat.TotalLoadFailed,
+			CacheStats:          make(map[string]*ycache.CacheStat),
+		}
+		for name, cs := range stat.CacheStats {
+			oldCs := &ycache.CacheStat{}
+			if tmp, ok := oldStat.CacheStats[name]; ok {
+				oldCs = tmp
+			}
+			incr.CacheStats[name] = &ycache.CacheStat{
+				ReqCount:  cs.ReqCount - oldCs.ReqCount,
+				ReqFailed: cs.ReqFailed - oldCs.ReqFailed,
+			}
+		}
+		prometheus.UpdateLevelCache("biz1", "ycache", "total_req_count", incr.TotalReqCount)
+		prometheus.UpdateLevelCache("biz1", "ycache", "total_req_failed", incr.TotalReqFailed)
+		prometheus.UpdateLevelCache("biz1", "ycache", "total_update_count", incr.TotalUpdateCount)
+		prometheus.UpdateLevelCache("biz1", "ycache", "total_update_failed", incr.TotalUpdateFailed)
+		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_concurrent", incr.TotalLoadConcurrent)
+		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_count", incr.TotalLoadCount)
+		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_failed", incr.TotalLoadFailed)
+		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_count", incr.TotalLoadCount)
+		for level, cs := range incr.CacheStats {
+			prometheus.UpdateLevelCache("biz1", level, "req_count", cs.ReqCount)
+			prometheus.UpdateLevelCache("biz1", level, "req_failed", cs.ReqFailed)
+		}
 		data, _ := json.Marshal(stat)
-		log.Printf("Biz1Cache stat:%s", string(data))
+		i++
+		if i%10 == 0 {
+			log.Printf("Biz1Cache stat:%s", string(data))
+		}
+		//replace
+		oldStat = stat
 	}
 }

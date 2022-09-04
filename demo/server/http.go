@@ -9,12 +9,15 @@ import (
 	"strconv"
 	"time"
 	"ycache/demo/levelcache"
+	"ycache/demo/prometheus"
 )
 
 func NewHttpServer() *http.Server {
 	//api
 	adaptor := &httpRouterAdaptor{}
 	http.Handle("/benchmark", adaptor.wrap(adaptor.benchmark))
+	//metric
+	http.Handle("/metrics", prometheus.NewHttpHandler())
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", 10001),
@@ -85,6 +88,16 @@ func (adaptor *httpRouterAdaptor) uuid() string {
 
 //api: benchmark
 func (adaptor *httpRouterAdaptor) benchmark(w http.ResponseWriter, r *http.Request) {
+	var err error
+	defer func(begin time.Time) {
+		status := 0
+		if err != nil {
+			status = 1
+		}
+		interval := time.Since(begin).Microseconds()
+		prometheus.UpdateHttp("/benchmark", status, interval)
+	}(time.Now())
+
 	var uuid = adaptor.uuid()
 	var reqUser = &benchRequest{}
 	if err := json.NewDecoder(r.Body).Decode(reqUser); err != nil {

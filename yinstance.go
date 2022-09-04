@@ -242,19 +242,19 @@ type CacheStat struct {
 
 func (yi *YInstance) Stat() *YStat {
 	stat := &YStat{
-		TotalReqCount:       yi.stat.TotalReqCount,
-		TotalReqFailed:      yi.stat.TotalReqFailed,
-		TotalUpdateCount:    yi.stat.TotalUpdateCount,
-		TotalUpdateFailed:   yi.stat.TotalUpdateFailed,
-		TotalLoadConcurrent: yi.stat.TotalLoadConcurrent,
-		TotalLoadCount:      yi.stat.TotalLoadCount,
-		TotalLoadFailed:     yi.stat.TotalLoadFailed,
+		TotalReqCount:       atomic.LoadInt64(&yi.stat.TotalReqCount),
+		TotalReqFailed:      atomic.LoadInt64(&yi.stat.TotalReqFailed),
+		TotalUpdateCount:    atomic.LoadInt64(&yi.stat.TotalUpdateCount),
+		TotalUpdateFailed:   atomic.LoadInt64(&yi.stat.TotalUpdateFailed),
+		TotalLoadConcurrent: atomic.LoadInt64(&yi.stat.TotalLoadConcurrent),
+		TotalLoadCount:      atomic.LoadInt64(&yi.stat.TotalLoadCount),
+		TotalLoadFailed:     atomic.LoadInt64(&yi.stat.TotalLoadFailed),
 		CacheStats:          make(map[string]*CacheStat),
 	}
 	for name, cs := range yi.stat.CacheStats {
 		stat.CacheStats[name] = &CacheStat{
-			ReqCount:  cs.ReqCount,
-			ReqFailed: cs.ReqFailed,
+			ReqCount:  atomic.LoadInt64(&cs.ReqCount),
+			ReqFailed: atomic.LoadInt64(&cs.ReqFailed),
 		}
 	}
 	return stat

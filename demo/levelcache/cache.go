@@ -75,11 +75,11 @@ func monitor() {
 		incr := &ycache.YStat{
 			TotalReqCount:       stat.TotalReqCount - oldStat.TotalReqCount,
 			TotalReqFailed:      stat.TotalReqFailed - oldStat.TotalReqFailed,
-			TotalUpdateCount:    stat.TotalUpdateCount - stat.TotalUpdateCount,
-			TotalUpdateFailed:   stat.TotalUpdateFailed - stat.TotalUpdateFailed,
-			TotalLoadConcurrent: stat.TotalLoadConcurrent - stat.TotalLoadConcurrent,
-			TotalLoadCount:      stat.TotalLoadCount - stat.TotalLoadCount,
-			TotalLoadFailed:     stat.TotalLoadFailed - stat.TotalLoadFailed,
+			TotalUpdateCount:    stat.TotalUpdateCount - oldStat.TotalUpdateCount,
+			TotalUpdateFailed:   stat.TotalUpdateFailed - oldStat.TotalUpdateFailed,
+			TotalLoadConcurrent: stat.TotalLoadConcurrent - oldStat.TotalLoadConcurrent,
+			TotalLoadCount:      stat.TotalLoadCount - oldStat.TotalLoadCount,
+			TotalLoadFailed:     stat.TotalLoadFailed - oldStat.TotalLoadFailed,
 			CacheStats:          make(map[string]*ycache.CacheStat),
 		}
 		for name, cs := range stat.CacheStats {
@@ -99,7 +99,6 @@ func monitor() {
 		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_concurrent", incr.TotalLoadConcurrent)
 		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_count", incr.TotalLoadCount)
 		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_failed", incr.TotalLoadFailed)
-		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_count", incr.TotalLoadCount)
 		for level, cs := range incr.CacheStats {
 			prometheus.UpdateLevelCache("biz1", level, "req_count", cs.ReqCount)
 			prometheus.UpdateLevelCache("biz1", level, "req_failed", cs.ReqFailed)

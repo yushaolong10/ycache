@@ -1,0 +1,44 @@
+#step 1: install redis
+docker run -itd --name my-redis -p 6379:6379 redis
+
+#step 2: install prometheus
+mkdir -p /home/prometheus
+vi /home/prometheus/prometheus.yml
+```
+global:
+  scrape_interval:     30s
+  evaluation_interval: 30s
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['172.17.0.1:9090']
+        labels:
+          instance: prometheus
+  - job_name: ycache
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['172.17.0.1:10001']
+```
+docker run -itd --name prometheus -p 9090:9090 \
+-v /home/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
+-v /etc/localtime:/etc/localtime:ro \
+prom/prometheus
+
+#step 3: install grafana
+docker run -itd \
+--user root \
+-p 3000:3000 \
+--name=grafana \
+-v /home/grafana:/var/lib/grafana \
+grafana/grafana
+
+
+#step 4: build demo program
+go build -o app ./demo/main.go
+nohup ./app &
+
+#step 5: use curl to test http request ok
+curl -X POST http://127.0.0.1:10001/benchmark -d '{"user_id":"1"}'
+
+#step 6: benchmark api and get detail in grafana
+go run ./demo/test/benchmark_client.go

@@ -2,7 +2,6 @@ package ycache
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -28,7 +27,7 @@ func TestMain(m *testing.M) {
 	}
 	collectorConf := &WarmCollectorConfig{
 		BuffSeconds: 10,
-		EntryNumber: 2,
+		EntryNumber: 20,
 		TimeRatio:   30,
 		MaxHotCount: 1000,
 		HotKeyTtl:   60,
@@ -36,7 +35,7 @@ func TestMain(m *testing.M) {
 	collector := NewWarmCollector(collectorConf)
 	cache = NewYCache("my_first_test",
 		WithCacheOptionErrorHandle(func(err error) {
-			fmt.Printf("ycache err:%s\n", err.Error())
+			//fmt.Printf("ycache err:%s\n", err.Error())
 		}),
 		WithCacheOptionCacheLevel(CacheL1,
 			NewMemCache("my_first_mem_cache", 10000000, -1),
@@ -48,9 +47,9 @@ func TestMain(m *testing.M) {
 	var err error
 	bizCacheIns, err = cache.CreateInstance("my_instance_1",
 		[]CacheLevel{CacheL1, CacheL2},
-		WithInstanceOptionCacheTtl(10),
+		WithInstanceOptionCacheTtl(60),
 		WithInstanceOptionRandomTtl(20),
-		WithInstanceOptionTtlFactor(5),
+		WithInstanceOptionTtlFactor(1),
 		WithInstanceOptionCollector(collector),
 	)
 	if err != nil {
@@ -67,22 +66,24 @@ func TestYInstanceGetSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("instance get err:%s", err.Error())
 	}
-	t.Logf("instance get 1 success, key:%s,val:%s", key, string(val))
-	time.Sleep(time.Second * 2)
+	if string(val) != "hello" {
+		t.Fatalf("instance get key must equal 'hello'")
+	}
+	time.Sleep(time.Second * 1)
 	val, _ = bizCacheIns.Get(context.Background(), "_abc_", key, func(ctx context.Context, key string) ([]byte, error) {
 		return []byte("second"), nil
 	})
-	t.Logf("instance get 2 success, key:%s,val:%s", key, string(val))
+	if string(val) == "second" {
+		t.Fatalf("instance get key must not equal 'second'")
+	}
 	val, err = bizCacheIns.Get(context.Background(), "_abcd_", key, func(ctx context.Context, key string) ([]byte, error) {
-		return nil, fmt.Errorf("second err")
+		return nil, fmt.Errorf("prefix _abcd_ err")
 	})
 	if err != nil {
-		t.Logf("instance get 3 load err, key:%s,err:%s", key, err.Error())
+		t.Logf("instance get key load should err, key:%s,err:%s", key, err.Error())
 	} else {
-		t.Logf("instance get 3 success, key:%s,val:%s", key, string(val))
+		t.Fatalf("instance get key must err")
 	}
-	stat, _ := json.Marshal(bizCacheIns.Stat())
-	t.Logf("ins stat:%s", string(stat))
 	time.Sleep(time.Millisecond * 50)
 }
 
@@ -93,9 +94,8 @@ func TestYInstanceBatchGetSet(t *testing.T) {
 		return []byte("hello"), nil
 	})
 	if err != nil {
-		t.Fatalf("instance get err:%s", err.Error())
+		t.Fatalf("instance get key1 err:%s", err.Error())
 	}
-	t.Logf("instance get 1 success, key:%s,val:%s", key1, string(val))
 	time.Sleep(time.Second * 2)
 	keys := []string{key1, key2}
 	mp, _ := bizCacheIns.BatchGet(context.Background(), "_abc_", keys, func(ctx context.Context, keys []string) (map[string][]byte, error) {
@@ -104,17 +104,21 @@ func TestYInstanceBatchGetSet(t *testing.T) {
 		}
 		return ret, nil
 	})
-	t.Logf("instance get 2 success, keys:%v,vals:%s", keys, mp)
+	for k, v := range mp {
+		if k == key1 && string(v) != "hello" {
+			t.Fatalf("batch get key1(%s) not equal", k)
+		} else if k == key2 && string(v) != "world" {
+			t.Fatalf("batch get key2(%s) not equal", k)
+		}
+	}
 	val, err = bizCacheIns.Get(context.Background(), "_abc_", key2, func(ctx context.Context, key string) ([]byte, error) {
-		return []byte("world"), nil
+		return []byte("world2"), nil
 	})
 	if err != nil {
-		t.Logf("instance get 3 load err, key2:%s,err:%s", key2, err.Error())
-	} else {
-		t.Logf("instance get 3 success, key2:%s,val:%s", key2, string(val))
+		t.Fatalf("instance get key2 load err, key2:%s,err:%s", key2, err.Error())
+	} else if string(val) == "world2" {
+		t.Fatalf("instance get key2 not expired, must not equal 'world2'")
 	}
-	stat, _ := json.Marshal(bizCacheIns.Stat())
-	t.Logf("ins stat:%s", string(stat))
 	time.Sleep(time.Millisecond * 50)
 }
 
@@ -125,9 +129,8 @@ func TestYInstanceBatchDel(t *testing.T) {
 		return []byte("hello"), nil
 	})
 	if err != nil {
-		t.Fatalf("instance get err:%s", err.Error())
+		t.Fatalf("instance get key1 err:%s", err.Error())
 	}
-	t.Logf("instance get 1 success, key:%s,val:%s", key1, string(val))
 	time.Sleep(time.Second * 2)
 	keys := []string{key1, key2}
 	mp, _ := bizCacheIns.BatchGet(context.Background(), "_abc_", keys, func(ctx context.Context, keys []string) (map[string][]byte, error) {
@@ -136,66 +139,61 @@ func TestYInstanceBatchDel(t *testing.T) {
 		}
 		return ret, nil
 	})
-	t.Logf("instance get 2 success, keys:%v,vals:%s", keys, mp)
 	val, err = bizCacheIns.Get(context.Background(), "_abc_", key2, nil)
 	if err != nil {
-		t.Logf("instance empty get 3 load err, key:%s,err:%s", key2, err.Error())
-	} else {
-		t.Logf("instance empty get 3 success, key:%s,val:%s", key2, string(val))
+		t.Fatalf("instance empty get key2 load err:%s", err.Error())
+	} else if string(mp[key2]) != "world" {
+		t.Fatalf("instance empty get key2 must equal 'world'")
 	}
 	err = bizCacheIns.Delete(context.Background(), "_abc_", key2)
 	if err != nil {
-		t.Logf("instance delete 4 err, key2:%s,err:%s", key2, err.Error())
-	} else {
-		t.Logf("instance delete 4 success, key2:%s", key2)
+		t.Fatalf("instance delete key2 err:%s", err.Error())
 	}
 	val, err = bizCacheIns.Get(context.Background(), "_abc_", key2, nil)
 	if err != nil {
-		t.Logf("instance get 5 load err, key:%s,err:%s", key2, err.Error())
+		t.Logf("instance get key2 load must err is normal")
 	} else {
-		t.Logf("instance get 5 success, key:%s,val:%s", key2, string(val))
+		t.Fatalf("instance get key2 must err")
 	}
 	val, err = bizCacheIns.Get(context.Background(), "_abc_", key2, func(ctx context.Context, key string) ([]byte, error) {
 		return []byte("new key2 val"), nil
 	})
 	if err != nil {
-		t.Logf("instance get 6 load err, key:%s,err:%s", key2, err.Error())
-	} else {
-		t.Logf("instance get 6 success, key:%s,val:%s", key2, string(val))
+		t.Fatalf("instance get key2 load error, key:%s,err:%s", key2, err.Error())
+	} else if string(val) != "new key2 val" {
+		t.Fatalf("instance get key2 success, key:%s must equal 'new key2 val'", key2)
 	}
 	err = bizCacheIns.BatchDelete(context.Background(), "_abc_", []string{key2})
 	if err != nil {
-		t.Logf("instance get 7 load err, key:%s,err:%s", key2, err.Error())
+		t.Fatalf("instance batch delete key2 error, key:%s,err:%s", key2, err.Error())
 	}
 	val, err = bizCacheIns.Get(context.Background(), "_abc_", key2, nil)
 	if err != nil {
-		t.Logf("instance get 8 load err, key:%s,err:%s", key2, err.Error())
+		t.Logf("instance get key2 error is normal, key:%s,err:%s", key2, err.Error())
 	} else {
-		t.Logf("instance get 8 success, key:%s,val:%s", key2, string(val))
+		t.Fatalf("instance get key must error, key:%s", key2)
 	}
-	stat, _ := json.Marshal(bizCacheIns.Stat())
-	t.Logf("ins stat:%s", string(stat))
 	time.Sleep(time.Millisecond * 50)
 }
 
 func TestYInstanceStrategy(t *testing.T) {
 	key1 := "k1"
-	for i := 0; i < 10; i++ {
-		val, _ := bizCacheIns.Get(context.Background(), "_abc_", key1, func(ctx context.Context, key string) ([]byte, error) {
+	for i := 0; i < 20; i++ {
+		_, err := bizCacheIns.Get(context.Background(), "_def_", key1, func(ctx context.Context, key string) ([]byte, error) {
 			if i < 10 {
 				return []byte("k1 hello"), nil
 			} else {
 				return []byte("k1 strategy ok"), nil
 			}
 		})
-		t.Logf("instance get 1 success, index:%d,key:%s,val:%s", i, key1, string(val))
+		if err != nil {
+			t.Fatalf("instance get key1 error, index:%d,key:%s,err:%s", i, key1, err.Error())
+		}
 	}
-	stat, _ := json.Marshal(bizCacheIns.Stat())
-	t.Logf("ins stat:%s", string(stat))
-	time.Sleep(time.Second * 5)
-	for i := 0; i < 10; i++ {
+	time.Sleep(time.Second * 3)
+	for i := 0; i < 20; i++ {
 		key2 := "k2"
-		mp, _ := bizCacheIns.BatchGet(context.Background(), "_abc_", []string{key2}, func(ctx context.Context, nKeys []string) (map[string][]byte, error) {
+		_, err := bizCacheIns.BatchGet(context.Background(), "_def_", []string{key2}, func(ctx context.Context, nKeys []string) (map[string][]byte, error) {
 			ret := make(map[string][]byte)
 			for _, key := range nKeys {
 				if key == key1 {
@@ -206,51 +204,50 @@ func TestYInstanceStrategy(t *testing.T) {
 			}
 			return ret, nil
 		})
-		t.Logf("instance get 2 success, key2:%s,val:%s", key2, mp)
+		if err != nil {
+			t.Fatalf("instance batch get key2 error, index:%d,key:%s,err:%s", i, key1, err.Error())
+		}
 	}
-	time.Sleep(time.Second * 30)
-	val, err := bizCacheIns.Get(context.Background(), "_abc_", key1, nil)
+	time.Sleep(time.Second * 50)
+	val, err := bizCacheIns.Get(context.Background(), "_def_", key1, nil)
 	if err != nil {
-		t.Logf("instance get 3 error, key:%s,err:%s", key1, err.Error())
-	} else {
-		t.Logf("instance get 3 success, key:%s,val:%s", key1, string(val))
+		t.Fatalf("instance get key1 error, key:%s,err:%s", key1, err.Error())
+	} else if string(val) != "batch new k1" {
+		t.Fatalf("instance get key1 by strategy must equal 'batch new k1', key:%s,val:%s", key1, string(val))
 	}
-	time.Sleep(time.Second * 30)
-	val, err = bizCacheIns.Get(context.Background(), "_abc_", key1, nil)
-	if err != nil {
-		t.Logf("instance get 4 error, key:%s,err:%s", key1, err.Error())
-	} else {
-		t.Logf("instance get 4 success, key:%s,val:%s", key1, string(val))
-	}
-	stat, _ = json.Marshal(bizCacheIns.Stat())
-	t.Logf("ins stat:%s", string(stat))
 	time.Sleep(time.Millisecond * 50)
 }
 
 func TestYInstanceConcurrent(t *testing.T) {
 	key1 := "k15"
-	for i := 0; i < 20; i++ {
+	oldStat := bizCacheIns.Stat()
+
+	for i := 0; i < 10; i++ {
 		i := i
 		go func() {
-			val, _ := bizCacheIns.Get(context.Background(), "_abc_", key1, func(ctx context.Context, key string) ([]byte, error) {
+			_, _ = bizCacheIns.Get(context.Background(), "_abc_", key1, func(ctx context.Context, key string) ([]byte, error) {
 				time.Sleep(time.Second)
-				fmt.Println("get in here", i)
 				if i < 10 {
 					return []byte("k1 hello"), nil
 				} else {
 					return []byte("k1 strategy ok"), nil
 				}
 			})
-			t.Logf("instance get 1 success, index:%d,key:%s,val:%s", i, key1, string(val))
+			//t.Logf("instance get key1 success, index:%d,val:%v", i, string(val))
 		}()
 	}
+	time.Sleep(time.Second * 3)
+	stat := bizCacheIns.Stat()
+	if stat.TotalLoadCount-oldStat.TotalLoadCount != 1 {
+		t.Fatalf("must load once")
+	}
+
 	key2 := "k25"
 	for i := 0; i < 5; i++ {
-		i := i
+		//i := i
 		go func() {
 			kvs, _ := bizCacheIns.BatchGet(context.Background(), "_abc_", []string{key2, key1}, func(ctx context.Context, keys []string) (map[string][]byte, error) {
 				time.Sleep(time.Second)
-				fmt.Println("batch in here ", i)
 				return map[string][]byte{
 					key1: []byte("k1 batch"),
 					key2: []byte("k2 batch"),
@@ -260,13 +257,12 @@ func TestYInstanceConcurrent(t *testing.T) {
 			for k, v := range kvs {
 				mp[k] = string(v)
 			}
-			t.Logf("instance get 2 success, index:%d,kvs:%v", i, mp)
+			//t.Logf("instance batch get key1,key2 success, index:%d,kvs:%v", i, mp)
 		}()
 	}
-	stat, _ := json.Marshal(bizCacheIns.Stat())
-	t.Logf("ins stat:%s", string(stat))
-	time.Sleep(time.Second * 10)
-	stat, _ = json.Marshal(bizCacheIns.Stat())
-	t.Logf("ins stat:%s", string(stat))
-	time.Sleep(time.Second * 1)
+	time.Sleep(time.Second * 3)
+	stat = bizCacheIns.Stat()
+	if stat.TotalLoadCount-oldStat.TotalLoadCount != 2 {
+		t.Fatalf("must load twice")
+	}
 }

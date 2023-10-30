@@ -75,7 +75,7 @@ func (client *RedisClient) Name() string {
 func (client *RedisClient) Get(ctx context.Context, key string) ([]byte, error) {
 	value, err := redis.String(client.readDo("GET", key))
 	if err != nil {
-		return nil, fmt.Errorf("redisclient get key:%s err:%s", key, err.Error())
+		return nil, err
 	}
 	return []byte(value), nil
 }
@@ -88,7 +88,7 @@ func (client *RedisClient) BatchGet(ctx context.Context, keys []string) (map[str
 	}
 	valueList, err := redis.Values(client.readDo("MGET", keyList...))
 	if err != nil {
-		return nil, fmt.Errorf("redisclient mget keys:%v err:%s", keys, err.Error())
+		return nil, err
 	}
 	var data = make(map[string][]byte)
 	for index, key := range keys {
@@ -104,7 +104,7 @@ func (client *RedisClient) BatchGet(ctx context.Context, keys []string) (map[str
 func (client *RedisClient) Del(ctx context.Context, key string) error {
 	_, err := client.writeDo("DEL", key)
 	if err != nil {
-		return fmt.Errorf("redisclient del key(%s) err:%s", key, err.Error())
+		return err
 	}
 	return nil
 }
@@ -117,7 +117,7 @@ func (client *RedisClient) BatchDel(ctx context.Context, keys []string) error {
 	}
 	_, err := client.writeDo("DEL", keyList...)
 	if err != nil {
-		return fmt.Errorf("redisclient batch del key err:%s", err.Error())
+		return err
 	}
 	return nil
 }
@@ -126,7 +126,7 @@ func (client *RedisClient) BatchDel(ctx context.Context, keys []string) error {
 func (client *RedisClient) Set(ctx context.Context, key string, value []byte, ttl int) error {
 	_, err := client.writeDo("SETEX", key, ttl, string(value))
 	if err != nil {
-		return fmt.Errorf("redisclient set key(%s) err:%s", key, err.Error())
+		return err
 	}
 	return nil
 }
@@ -137,13 +137,13 @@ func (client *RedisClient) BatchSet(ctx context.Context, kvs map[string][]byte, 
 		for key, value := range kvs {
 			err := conn.Send("SETEX", key, ttl, string(value))
 			if err != nil {
-				return fmt.Errorf("redisclient write pipeline set key(%s) err:%s", key, err.Error())
+				return err
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("redisclient batch set err:%s", err.Error())
+		return err
 	}
 	return nil
 }

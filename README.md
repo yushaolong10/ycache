@@ -14,17 +14,12 @@ level cache provides solution for high concurrent query scenarios.
 - Perfect monitoring indicators
 
 ## Architecture
-### 1. Multi-level cache layering
+Multi-level cache layering
 
 <center>
     <img src="https://github.com/yushaolong7/ycache/blob/main/doc/arch-1-level.png" width=40% height=40% />
 </center>
 
-#### 2. Active update strategy extended
-
-<center>
-    <img src="https://github.com/yushaolong7/ycache/blob/main/doc/arch-2-collector.png" width=40% height=40% />
-</center>
 
 ## Usage
 ```go
@@ -58,10 +53,6 @@ see [demo](https://github.com/yushaolong7/ycache/blob/main/demo),there are speci
     <img src="https://github.com/yushaolong7/ycache/blob/main/demo/assets/monitor.png">
 </center>
 
-
-## TODO
-
-* Support collector quick strategy.
 
 ## License
 

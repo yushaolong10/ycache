@@ -25,16 +25,8 @@ func TestMain(m *testing.M) {
 		MaxIdleConns:   5,
 		IdleTimeout:    10,
 	}
-	collectorConf := &WarmCollectorConfig{
-		BuffSeconds: 10,
-		EntryNumber: 20,
-		TimeRatio:   30,
-		MaxHotCount: 1000,
-		HotKeyTtl:   60,
-	}
-	collector := NewWarmCollector(collectorConf)
 	cache = NewYCache("my_first_test",
-		WithCacheOptionErrorHandle(func(err error) {
+		WithCacheOptionErrorHandle(func(desc string, err error) {
 			//fmt.Printf("ycache err:%s\n", err.Error())
 		}),
 		WithCacheOptionCacheLevel(CacheL1,
@@ -50,7 +42,6 @@ func TestMain(m *testing.M) {
 		WithInstanceOptionCacheTtl(60),
 		WithInstanceOptionRandomTtl(20),
 		WithInstanceOptionTtlFactor(1),
-		WithInstanceOptionCollector(collector),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("create instance1 err:%s", err.Error()))
@@ -172,48 +163,6 @@ func TestYInstanceBatchDel(t *testing.T) {
 		t.Logf("instance get key2 error is normal, key:%s,err:%s", key2, err.Error())
 	} else {
 		t.Fatalf("instance get key must error, key:%s", key2)
-	}
-	time.Sleep(time.Millisecond * 50)
-}
-
-func TestYInstanceStrategy(t *testing.T) {
-	key1 := "k1"
-	for i := 0; i < 20; i++ {
-		_, err := bizCacheIns.Get(context.Background(), "_def_", key1, func(ctx context.Context, key string) ([]byte, error) {
-			if i < 10 {
-				return []byte("k1 hello"), nil
-			} else {
-				return []byte("k1 strategy ok"), nil
-			}
-		})
-		if err != nil {
-			t.Fatalf("instance get key1 error, index:%d,key:%s,err:%s", i, key1, err.Error())
-		}
-	}
-	time.Sleep(time.Second * 3)
-	for i := 0; i < 20; i++ {
-		key2 := "k2"
-		_, err := bizCacheIns.BatchGet(context.Background(), "_def_", []string{key2}, func(ctx context.Context, nKeys []string) (map[string][]byte, error) {
-			ret := make(map[string][]byte)
-			for _, key := range nKeys {
-				if key == key1 {
-					ret[key] = []byte("batch new k1")
-				} else if key == key2 {
-					ret[key] = []byte("batch new k2")
-				}
-			}
-			return ret, nil
-		})
-		if err != nil {
-			t.Fatalf("instance batch get key2 error, index:%d,key:%s,err:%s", i, key1, err.Error())
-		}
-	}
-	time.Sleep(time.Second * 50)
-	val, err := bizCacheIns.Get(context.Background(), "_def_", key1, nil)
-	if err != nil {
-		t.Fatalf("instance get key1 error, key:%s,err:%s", key1, err.Error())
-	} else if string(val) != "batch new k1" {
-		t.Fatalf("instance get key1 by strategy must equal 'batch new k1', key:%s,val:%s", key1, string(val))
 	}
 	time.Sleep(time.Millisecond * 50)
 }

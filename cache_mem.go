@@ -2,7 +2,6 @@ package ycache
 
 import (
 	"context"
-	"fmt"
 	"github.com/coocood/freecache"
 	"runtime/debug"
 	"sync"
@@ -28,7 +27,7 @@ func (mc *MemCache) Name() string {
 func (mc *MemCache) Get(ctx context.Context, key string) ([]byte, error) {
 	value, err := mc.cache.Get([]byte(key))
 	if err != nil {
-		return nil, fmt.Errorf("freecache get key(%s) err:%s", key, err.Error())
+		return nil, err
 	}
 	return value, nil
 }
@@ -72,7 +71,7 @@ func (mc *MemCache) BatchDel(ctx context.Context, keys []string) error {
 func (mc *MemCache) Set(ctx context.Context, key string, value []byte, ttl int) error {
 	err := mc.cache.Set([]byte(key), value, ttl)
 	if err != nil {
-		return fmt.Errorf("freecache set key(%s) err:%s", key, err.Error())
+		return err
 	}
 	return nil
 }
@@ -81,7 +80,7 @@ func (mc *MemCache) BatchSet(ctx context.Context, kvs map[string][]byte, ttl int
 	for key, value := range kvs {
 		err := mc.cache.Set([]byte(key), value, ttl)
 		if err != nil {
-			return fmt.Errorf("freecache batch set key(%s) err:%s", key, err.Error())
+			return err
 		}
 	}
 	return nil

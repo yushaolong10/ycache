@@ -30,9 +30,9 @@ func UpdateHttp(path string, status int, timeUsed int64) {
 	}
 }
 
-func UpdateLevelCache(instance, name, index string, value int64) {
+func UpdateLevelCache(name, instance, index string, value int64) {
 	if vec, ok := counterVec[levelCache]; ok {
-		vec.WithLabelValues(instance, name, index).Add(float64(value))
+		vec.WithLabelValues(name, instance, index).Add(float64(value))
 	}
 }
 
@@ -72,5 +72,5 @@ func registerCounter(name string, metrics []string) error {
 
 func init() {
 	_ = registerHistogram(httpApi, []string{"path", "status"}, nil)
-	_ = registerCounter(levelCache, []string{"instance", "name", "index"})
+	_ = registerCounter(levelCache, []string{"name", "instance", "index"})
 }

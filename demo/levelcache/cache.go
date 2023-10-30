@@ -6,7 +6,6 @@ import (
 	"github.com/coocood/freecache"
 	"github.com/gomodule/redigo/redis"
 	"log"
-	"strings"
 	"time"
 	"ycache"
 	"ycache/demo/prometheus"
@@ -29,18 +28,9 @@ func Init() error {
 		MaxIdleConns:   5,
 		IdleTimeout:    10,
 	}
-	collectorConf := &ycache.WarmCollectorConfig{
-		BuffSeconds: 10,
-		EntryNumber: 100,
-		TimeRatio:   60,
-		MaxHotCount: 1000,
-		HotKeyTtl:   60,
-	}
-	collector := ycache.NewWarmCollector(collectorConf)
-	cache := ycache.NewYCache("my_first_test",
-		ycache.WithCacheOptionErrorHandle(func(err error) {
-			if !strings.Contains(err.Error(), freecache.ErrNotFound.Error()) &&
-				!strings.Contains(err.Error(), redis.ErrNil.Error()) {
+	cache := ycache.NewYCache("my_ycache_test",
+		ycache.WithCacheOptionErrorHandle(func(desc string, err error) {
+			if err != freecache.ErrNotFound && err != redis.ErrNil {
 				fmt.Printf("ycache err:%s\n", err.Error())
 			}
 		}),
@@ -48,7 +38,7 @@ func Init() error {
 			ycache.NewMemCache("my_first_mem_cache", 10000000, -1), //10M byte
 		),
 		ycache.WithCacheOptionCacheLevel(ycache.CacheL2,
-			ycache.NewRedisClient("my_redis_cache", redisConf),
+			ycache.NewRedisClient("my_second_redis_cache", redisConf),
 		),
 	)
 	var err error
@@ -57,7 +47,6 @@ func Init() error {
 		ycache.WithInstanceOptionCacheTtl(60),
 		ycache.WithInstanceOptionRandomTtl(30),
 		ycache.WithInstanceOptionTtlFactor(5),
-		ycache.WithInstanceOptionCollector(collector),
 	)
 	if err != nil {
 		return fmt.Errorf("create instance1 err:%s", err.Error())
@@ -75,8 +64,6 @@ func monitor() {
 		incr := &ycache.YStat{
 			TotalReqCount:       stat.TotalReqCount - oldStat.TotalReqCount,
 			TotalReqFailed:      stat.TotalReqFailed - oldStat.TotalReqFailed,
-			TotalUpdateCount:    stat.TotalUpdateCount - oldStat.TotalUpdateCount,
-			TotalUpdateFailed:   stat.TotalUpdateFailed - oldStat.TotalUpdateFailed,
 			TotalLoadConcurrent: stat.TotalLoadConcurrent - oldStat.TotalLoadConcurrent,
 			TotalLoadCount:      stat.TotalLoadCount - oldStat.TotalLoadCount,
 			TotalLoadFailed:     stat.TotalLoadFailed - oldStat.TotalLoadFailed,
@@ -92,16 +79,14 @@ func monitor() {
 				ReqFailed: cs.ReqFailed - oldCs.ReqFailed,
 			}
 		}
-		prometheus.UpdateLevelCache("biz1", "ycache", "total_req_count", incr.TotalReqCount)
-		prometheus.UpdateLevelCache("biz1", "ycache", "total_req_failed", incr.TotalReqFailed)
-		prometheus.UpdateLevelCache("biz1", "ycache", "total_update_count", incr.TotalUpdateCount)
-		prometheus.UpdateLevelCache("biz1", "ycache", "total_update_failed", incr.TotalUpdateFailed)
-		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_concurrent", incr.TotalLoadConcurrent)
-		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_count", incr.TotalLoadCount)
-		prometheus.UpdateLevelCache("biz1", "ycache", "total_load_failed", incr.TotalLoadFailed)
+		prometheus.UpdateLevelCache("ycache", Biz1Cache.Name(), "total_req_count", incr.TotalReqCount)
+		prometheus.UpdateLevelCache("ycache", Biz1Cache.Name(), "total_req_failed", incr.TotalReqFailed)
+		prometheus.UpdateLevelCache("ycache", Biz1Cache.Name(), "total_load_concurrent", incr.TotalLoadConcurrent)
+		prometheus.UpdateLevelCache("ycache", Biz1Cache.Name(), "total_load_count", incr.TotalLoadCount)
+		prometheus.UpdateLevelCache("ycache", Biz1Cache.Name(), "total_load_failed", incr.TotalLoadFailed)
 		for level, cs := range incr.CacheStats {
-			prometheus.UpdateLevelCache("biz1", level, "req_count", cs.ReqCount)
-			prometheus.UpdateLevelCache("biz1", level, "req_failed", cs.ReqFailed)
+			prometheus.UpdateLevelCache(Biz1Cache.Name(), level, "req_count", cs.ReqCount)
+			prometheus.UpdateLevelCache(Biz1Cache.Name(), level, "req_failed", cs.ReqFailed)
 		}
 		data, _ := json.Marshal(stat)
 		i++
